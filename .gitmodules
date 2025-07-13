@@ -1,0 +1,3 @@
+[submodule "mbrl/third_party/truncnorm"]
+	path = mbrl/third_party/truncnorm
+	url = https://github.com/toshas/torch_truncnorm.git
