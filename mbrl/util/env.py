@@ -51,7 +51,7 @@ def _legacy_make_env(
     if "dmcontrol___" in cfg.overrides.env:
         import mbrl.third_party.dmc2gym as dmc2gym
 
-        domain, task = cfg.overrides.env.split("___")[1].split("--")
+        domain, task = cfg.overrides.env.split("___")[1].split("-")
         term_fn, reward_fn = _get_term_and_reward_fn(cfg)
         env = dmc2gym.make(domain_name=domain, task_name=task)
         env = gym.make("GymV26Environment-v0", env=env)
@@ -95,6 +95,14 @@ def _legacy_make_env(
         elif cfg.overrides.env == "humanoid_truncated_obs":
             env = mbrl.env.mujoco_envs.HumanoidTruncatedObsEnv()
             term_fn = mbrl.env.termination_fns.humanoid
+            reward_fn = None
+        elif cfg.overrides.env == "sparse_point_robot":
+            env = mbrl.env.mujoco_envs.SparsePointRobot(
+                maze_map_name=cfg.overrides.maze_map_name,
+                action_penalty=cfg.overrides.action_penalty,
+                reward_type=cfg.overrides.reward_type,
+            )
+            term_fn = mbrl.env.termination_fns.no_termination
             reward_fn = None
         else:
             raise ValueError("Invalid environment string.")

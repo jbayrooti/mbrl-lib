@@ -1,46 +1,48 @@
 # @package _group_
-env: "gym___Pusher-v4"
+env: "gym___HalfCheetah-v4"
 term_fn: "no_termination"
-trial_length: 150
-exp_name: "mbpo_pusher"
-project_name: "optimistic_rl_pusher"
+exp_name: "hot_gp_halfcheetah"
+project_name: "optimistic_rl_cheetah"
 seed: 0
 
 action_penalty: 0
-num_steps: 20000
-epoch_length: 150
+num_steps: 250000
+epoch_length: 1000
 num_elites: 5
 patience: 5
-gp_lr: 0.005
 model_lr: 0.001
-model_wd: 0.00005
+model_wd: 0.00001
 model_batch_size: 256
 validation_ratio: 0.2
 freq_train_model: 250
 effective_model_rollouts_per_step: 400
 rollout_batch_size: 1000
-rollout_schedule: [1, 15, 1, 1]
-num_sac_updates_per_step: 20
+rollout_schedule: [20, 150, 1, 1]
+num_sac_updates_per_step: 10
 sac_updates_every_steps: 1
 num_epochs_to_retain_sac_buffer: 1
 
-# Model params
-ensemble_size: 7
-deterministic: false
-propagation_method: expectation
-use_optimism: false # for optimistic reward selectin
+# GP params
+num_epochs_train_gp: 100
+gp_lr: 0.005
+num_gp_train_data: 1000
+num_inducing_points: 100
+use_hot_gp: True
+use_thompson_sampling: False
+use_hucrl: False
+hucrl_beta: 0.001
+hucrl_num_samples: 5
 initial_low_reward_percentile: 0.1
 final_low_reward_percentile: 0.5
 high_reward_percentile: 1
-clamp_max_logvar: true
 
 sac_gamma: 0.99
 sac_tau: 0.005
 sac_alpha: 0.2
 sac_policy: "Gaussian"
-sac_target_update_interval: 4
+sac_target_update_interval: 1
 sac_automatic_entropy_tuning: true
-sac_target_entropy: -0.05
-sac_hidden_size: 256
+sac_target_entropy: -1
+sac_hidden_size: 512
 sac_lr: 0.0003
 sac_batch_size: 256

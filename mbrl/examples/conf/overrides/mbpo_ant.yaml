@@ -1,6 +1,9 @@
 # @package _group_
 env: "ant_truncated_obs"
 # term_fn is set automatically by mbrl.util.env.EnvHandler.make_env
+exp_name: "mbpo_ant"
+project_name: project_name
+seed: 0
 
 num_steps: 300000
 epoch_length: 1000

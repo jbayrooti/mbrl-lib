@@ -2,7 +2,7 @@
 env: "gym___Pusher-v4"
 term_fn: "no_termination"
 trial_length: 150
-exp_name: "mbpo_pusher"
+exp_name: "sac_pusher"
 project_name: "optimistic_rl_pusher"
 seed: 0
 
@@ -11,7 +11,6 @@ num_steps: 20000
 epoch_length: 150
 num_elites: 5
 patience: 5
-gp_lr: 0.005
 model_lr: 0.001
 model_wd: 0.00005
 model_batch_size: 256

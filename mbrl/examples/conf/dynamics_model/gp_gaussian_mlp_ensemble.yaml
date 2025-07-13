@@ -1,0 +1,22 @@
+# @package _group_
+_target_: mbrl.models.GPGaussianMLP
+device: ${device}
+num_layers: 4
+in_size: ???
+out_size: ???
+ensemble_size: 1
+hid_size: 200
+deterministic: false
+propagation_method: null
+learn_logvar_bounds: false
+num_inducing_points: ${overrides.num_inducing_points}
+use_hot_gp: ${overrides.use_hot_gp}
+use_thompson_sampling: ${overrides.use_thompson_sampling}
+use_hucrl: ${overrides.use_hucrl}
+hucrl_beta: ${overrides.hucrl_beta}
+hucrl_num_samples: ${overrides.hucrl_num_samples}
+initial_low_reward_percentile: ${overrides.initial_low_reward_percentile}
+final_low_reward_percentile: ${overrides.final_low_reward_percentile}
+high_reward_percentile: ${overrides.high_reward_percentile}
+activation_fn_cfg:
+  _target_: torch.nn.SiLU

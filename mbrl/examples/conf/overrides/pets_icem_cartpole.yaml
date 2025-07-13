@@ -1,5 +1,9 @@
 # @package _group_
 env: "cartpole_continuous"
+exp_name: "pets_icem_cartpole"
+project_name: project_name
+seed: 0
+
 learned_rewards: false
 trial_length: 200
 num_steps: 1000

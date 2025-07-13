@@ -1,5 +1,8 @@
 # @package _group_
 env: "cartpole_pets_version"
+exp_name: "pets_cartpole_paper_verison"
+project_name: project_name
+seed: 0
 
 # Note: This pre-process function requires setting model input manually
 # Run as

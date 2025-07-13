@@ -429,6 +429,7 @@ class Ensemble(Model, abc.ABC):
         model_state: Dict[str, torch.Tensor],
         deterministic: bool = False,
         rng: Optional[torch.Generator] = None,
+        model_updates: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Optional[Dict[str, torch.Tensor]]]:
         """Samples an output from the model using .
 
@@ -455,6 +456,10 @@ class Ensemble(Model, abc.ABC):
                 state dictionary. Everything but the observation is optional, and can
                 be returned with value ``None``.
         """
+        from mbrl.models.gp_gaussian_mlp import GPGaussianMLP
+        if isinstance(self, GPGaussianMLP):
+            return self.custom_sample_1d(model_input, rng=rng, model_updates=model_updates), model_state
+
         if deterministic or self.deterministic:
             return (
                 self.forward(
@@ -470,4 +475,7 @@ class Ensemble(Model, abc.ABC):
         )
         variances = logvars.exp()
         stds = torch.sqrt(variances)
-        return torch.normal(means, stds, generator=rng), model_state
+        if self.use_optimism:
+            return self.get_optimistic_sample(means, stds, rng), model_state
+        else:
+            return torch.normal(means, stds, generator=rng), model_state

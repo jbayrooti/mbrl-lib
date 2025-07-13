@@ -135,6 +135,11 @@ class OneDTransitionRewardModel(Model):
             target = target_obs
         return model_in.float(), target.float()
 
+    def _process_gp_batch(
+        self, batch: mbrl.types.GPTransitionBatch, _as_float: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return batch.astuple()
+
     def forward(self, x: torch.Tensor, *args, **kwargs) -> Tuple[torch.Tensor, ...]:
         """Calls forward method of base model with the given input and args."""
         return self.model.forward(x, *args, **kwargs)
@@ -187,6 +192,7 @@ class OneDTransitionRewardModel(Model):
         batch: mbrl.types.TransitionBatch,
         optimizer: torch.optim.Optimizer,
         target: Optional[torch.Tensor] = None,
+        update_gp_only: Optional[bool] = False,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """Updates the model given a batch of transitions and an optimizer.
 
@@ -198,6 +204,10 @@ class OneDTransitionRewardModel(Model):
             (tensor and optional dict): as returned by `model.loss().`
         """
         assert target is None
+        if update_gp_only:
+            model_in, target = self._process_gp_batch(batch)
+            return self.model.gp_update(model_in, optimizer, target=target)
+
         model_in, target = self._process_batch(batch)
         return self.model.update(model_in, optimizer, target=target)
 
@@ -248,6 +258,7 @@ class OneDTransitionRewardModel(Model):
         model_state: Dict[str, torch.Tensor],
         deterministic: bool = False,
         rng: Optional[torch.Generator] = None,
+        model_updates: Optional[int] = None,
     ) -> Tuple[
         torch.Tensor,
         Optional[torch.Tensor],
@@ -276,7 +287,7 @@ class OneDTransitionRewardModel(Model):
                 "OneDTransitionRewardModel requires wrapped model to define method sample_1d"
             )
         preds, next_model_state = self.model.sample_1d(
-            model_in, model_state, rng=rng, deterministic=deterministic
+            model_in, model_state, rng=rng, deterministic=deterministic, model_updates=model_updates,
         )
         next_observs = preds[:, :-1] if self.learned_rewards else preds
         if self.target_is_delta:

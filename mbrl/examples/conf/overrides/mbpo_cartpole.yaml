@@ -1,5 +1,8 @@
 # @package _group_
 env: "cartpole_continuous"
+exp_name: "mbpo_cartpole"
+project_name: project_name
+seed: 0
 trial_length: 200
 
 num_steps: 5000

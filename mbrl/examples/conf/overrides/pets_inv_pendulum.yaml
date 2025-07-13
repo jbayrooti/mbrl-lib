@@ -1,6 +1,10 @@
 # @package _group_
 env: "gym___InvertedPendulum-v4"
 term_fn: "inverted_pendulum"
+exp_name: "pets_inv_pendulum"
+project_name: project_name
+seed: 0
+
 learned_rewards: true
 trial_length: 1000
 num_steps: 20000

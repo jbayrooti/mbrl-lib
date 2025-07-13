@@ -1,6 +1,9 @@
 # @package _group_
 env: "gym___InvertedPendulum-v4"
 term_fn: "inverted_pendulum"
+exp_name: "mbpo_inv_pendulum"
+project_name: project_name
+seed: 0
 
 num_steps: 20000
 epoch_length: 250

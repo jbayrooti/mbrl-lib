@@ -5,10 +5,13 @@
 import collections
 import csv
 import pathlib
+from omegaconf import OmegaConf
 from typing import Counter, Dict, List, Mapping, Tuple, Union
 
 import termcolor
 import torch
+import wandb
+import omegaconf
 
 LogFormatType = List[Tuple[str, str, str]]
 LogTypes = Union[int, float, torch.Tensor]
@@ -119,7 +122,7 @@ class Logger(object):
     """
 
     def __init__(
-        self, log_dir: Union[str, pathlib.Path], enable_back_compatible: bool = False
+        self, cfg: omegaconf.DictConfig, log_dir: Union[str, pathlib.Path], enable_back_compatible: bool = False
     ):
         self._log_dir = pathlib.Path(log_dir)
         self._groups: Dict[str, Tuple[MetersGroup, int, str]] = {}
@@ -174,6 +177,7 @@ class Logger(object):
             data (mapping str->(int/float/torch.Tensor)): the dictionary with the data. Each
                 keyword must be a variable name in the log format passed when creating this group.
         """
+        wandb.log(data, commit=True)
         if group_name not in self._groups:
             raise ValueError(f"Group {group_name} has not been registered.")
         meter_group, dump_frequency, color = self._groups[group_name]
@@ -182,8 +186,9 @@ class Logger(object):
                 value = value.item()  # type: ignore
             meter_group.log(key, value)
         self._group_steps[group_name] += 1
-        if self._group_steps[group_name] % dump_frequency == 0:
-            self._dump(group_name)
+        if group_name == "eval":
+            if self._group_steps[group_name] % dump_frequency == 0:
+                self._dump(group_name)
 
     def _dump(self, group_name: str, save: bool = True):
         if group_name not in self._groups:
@@ -216,6 +221,5 @@ class Logger(object):
         meter_group.log(key, value)
 
     def dump(self, step, save=True):
-        for group_name in ["train", "eval"]:
-            meter_group, _, color = self._groups[group_name]
-            meter_group.dump(step, group_name, save, color=color)
+        meter_group, _, color = self._groups["eval"]
+        meter_group.dump(step, "eval", save, color=color)

@@ -12,6 +12,7 @@ import torch
 import tqdm
 from torch import optim as optim
 
+from mbrl.models.gp_gaussian_mlp import GPGaussianMLP
 from mbrl.util.logger import Logger
 from mbrl.util.replay_buffer import BootstrapIterator, TransitionIterator
 
@@ -44,12 +45,14 @@ class ModelTrainer:
         self,
         model: Model,
         optim_lr: float = 1e-4,
+        gp_optim_lr: float = 1e-4,
         weight_decay: float = 1e-5,
         optim_eps: float = 1e-8,
         logger: Optional[Logger] = None,
     ):
         self.model = model
         self._train_iteration = 0
+        self.use_gp_model = isinstance(self.model.model, GPGaussianMLP)
 
         self.logger = logger
         if self.logger:
@@ -60,7 +63,20 @@ class ModelTrainer:
                 dump_frequency=1,
             )
 
-        self.optimizer = optim.Adam(
+        if self.use_gp_model:
+            self.optimizer = optim.Adam(
+                list(self.model.model.hidden_layers.parameters()) + list(self.model.model.mean_and_logvar.parameters()),
+                lr=optim_lr,
+                weight_decay=weight_decay,
+                eps=optim_eps,
+            )
+            self.gp_optimizer = optim.Adam(
+                list(self.model.model.gp.parameters()) + list(self.model.model.likelihood.parameters()),
+                lr=gp_optim_lr,
+                eps=optim_eps,
+            )
+        else:
+            self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=optim_lr,
             weight_decay=weight_decay,
@@ -69,6 +85,7 @@ class ModelTrainer:
 
     def train(
         self,
+        env_steps: int,
         dataset_train: TransitionIterator,
         dataset_val: Optional[TransitionIterator] = None,
         num_epochs: Optional[int] = None,
@@ -78,6 +95,7 @@ class ModelTrainer:
         batch_callback: Optional[Callable] = None,
         evaluate: bool = True,
         silent: bool = False,
+        model_updates: int = 0,
     ) -> Tuple[List[float], List[float]]:
         """Trains the model for some number of epochs.
 
@@ -142,7 +160,9 @@ class ModelTrainer:
         # only enable tqdm if training for a single epoch,
         # otherwise it produces too much output
         disable_tqdm = silent or (num_epochs is None or num_epochs > 1)
+        num_epochs_trained = 0
 
+        # Train the mean function
         for epoch in epoch_iter:
             if batch_callback:
                 batch_callback_epoch = functools.partial(batch_callback, epoch)
@@ -158,7 +178,6 @@ class ModelTrainer:
             training_losses.append(total_avg_loss)
 
             eval_score = None
-            model_val_score = 0
             if evaluate:
                 eval_score = self.evaluate(
                     eval_dataset, batch_callback=batch_callback_epoch
@@ -174,25 +193,7 @@ class ModelTrainer:
                     epochs_since_update = 0
                 else:
                     epochs_since_update += 1
-                model_val_score = eval_score.mean()
 
-            if self.logger and not silent:
-                self.logger.log_data(
-                    self._LOG_GROUP_NAME,
-                    {
-                        "iteration": self._train_iteration,
-                        "epoch": epoch,
-                        "train_dataset_size": dataset_train.num_stored,
-                        "val_dataset_size": dataset_val.num_stored
-                        if dataset_val is not None
-                        else 0,
-                        "model_loss": total_avg_loss,
-                        "model_val_score": model_val_score,
-                        "model_best_val_score": best_val_score.mean()
-                        if best_val_score is not None
-                        else 0,
-                    },
-                )
             if callback:
                 callback(
                     self.model,
@@ -203,15 +204,63 @@ class ModelTrainer:
                     best_val_score,
                 )
 
-            if patience and epochs_since_update >= patience:
+            num_epochs_trained += 1
+            if num_epochs is None and patience and epochs_since_update >= patience:
                 break
-
+        
         # saving the best models:
         if evaluate:
             self._maybe_set_best_weights_and_elite(best_weights, best_val_score)
 
+        if self.logger and not silent:
+            to_log = {
+                    "env_step": env_steps,
+                    "model_updates": model_updates,
+                    "train/num_epochs_trained": num_epochs_trained,
+                    "train/final_epoch_model_loss": total_avg_loss,
+                }
+            self.logger.log_data(self._LOG_GROUP_NAME, to_log)
+
         self._train_iteration += 1
         return training_losses, val_scores
+
+    def train_gp(
+        self,
+        env_steps: int,
+        gp_dataset_train: TransitionIterator,
+        num_epochs: int = 100,
+        silent: bool = False,
+        model_updates: int = 0,
+        ):
+        self.model.model.gp.train()
+        self.model.model.likelihood.train()
+        self.model.model.set_gp_loss(gp_dataset_train)
+        for _ in range(num_epochs):
+            batch_losses: List[float] = []
+            for batch in tqdm.tqdm(gp_dataset_train, disable=True):
+                loss, meta = self.model.update(batch, self.gp_optimizer, update_gp_only=True)
+                batch_losses.append(loss)
+            total_avg_loss = np.mean(batch_losses).mean().item()
+        
+        if self.logger and not silent:
+            global_noise = self.model.model.likelihood.noise.detach().clone().item()
+            task_noises = self.model.model.likelihood.task_noises.detach()[0].clone()
+            outputscales = self.model.model.gp.covar_module.outputscale[0].detach().clone()
+            noises = global_noise + task_noises
+            to_log = {
+                    "env_step": env_steps,
+                    "model_updates": model_updates,
+                    "train_gp/num_epochs_trained": num_epochs,
+                    "train_gp/final_epoch_model_loss": total_avg_loss,
+                    "train_gp/global_noise": global_noise,
+                    "train_gp/low_reward_percentile": self.model.model.low_reward_percentile,
+                    "train_gp/high_reward_percentile": self.model.model.high_reward_percentile,
+                }
+            for i in range(self.model.model.out_size):
+                to_log.update({f"train_gp/task_noise_{i}": task_noises[i].item()})
+                to_log.update({f"gp_outputscales/outputscale_{i}": outputscales[i].item()})
+                to_log.update({f"gp_signals/signal_to_noise_gp_{i}": outputscales[i].item() / (outputscales[i].item() + noises[i]).item()})
+            self.logger.log_data(self._LOG_GROUP_NAME, to_log)
 
     def evaluate(
         self, dataset: TransitionIterator, batch_callback: Optional[Callable] = None

@@ -1,6 +1,9 @@
 # @package _group_
 env: "gym___Walker2d-v4"
 term_fn: "walker2d"
+exp_name: "mbpo_walker"
+project_name: project_name
+seed: 0
 
 num_steps: 300000
 epoch_length: 1000

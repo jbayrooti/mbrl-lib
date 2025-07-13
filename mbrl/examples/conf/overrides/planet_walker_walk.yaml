@@ -1,5 +1,8 @@
 # @package _group_
 env: "dmcontrol_walker_walk"  # used to set the hydra dir, ignored otherwise
+exp_name: "planet_walker_walk"
+project_name: project_name
+seed: 0
 
 env_cfg:
   _target_: "mbrl.third_party.dmc2gym.make"

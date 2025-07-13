@@ -78,6 +78,46 @@ class TransitionBatch:
                 self._get_new_shape(self.truncateds.shape, batch_size)
             ),
         )
+    
+@dataclass
+class GPTransitionBatch:
+    """Represents a batch of GP transitions"""
+
+    model_in: Optional[TensorType]
+    target: Optional[TensorType]
+
+    def __len__(self):
+        return self.model_in.shape[0]
+
+    def astuple(self) -> Transition:
+        return (
+            self.model_in,
+            self.target,
+        )
+
+    def __getitem__(self, item):
+        return GPTransitionBatch(
+            self.model_in[item],
+            self.target[item],
+        )
+
+    @staticmethod
+    def _get_new_shape(old_shape: Tuple[int, ...], batch_size: int):
+        new_shape = list((1,) + old_shape)
+        new_shape[0] = batch_size
+        new_shape[1] = old_shape[0] // batch_size
+        return tuple(new_shape)
+
+    def add_new_batch_dim(self, batch_size: int):
+        if not len(self) % batch_size == 0:
+            raise ValueError(
+                "Current batch of transitions size is not a "
+                "multiple of the new batch size. "
+            )
+        return GPTransitionBatch(
+            self.model_in.reshape(self._get_new_shape(self.model_in.shape, batch_size)),
+            self.target.reshape(self._get_new_shape(self.target.shape, batch_size)),
+        )
 
 
 ModelInput = Union[torch.Tensor, TransitionBatch]

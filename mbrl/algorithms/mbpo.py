@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import os
+import wandb
 from typing import Optional, Sequence, cast
 
 import gymnasium as gym
@@ -35,32 +36,37 @@ def rollout_model_and_populate_sac_buffer(
     sac_buffer: mbrl.util.ReplayBuffer,
     sac_samples_action: bool,
     rollout_horizon: int,
+    total_batch_size: int,
     batch_size: int,
+    model_updates: int,
 ):
-    batch = replay_buffer.sample(batch_size)
-    initial_obs, *_ = cast(mbrl.types.TransitionBatch, batch).astuple()
-    model_state = model_env.reset(
-        initial_obs_batch=cast(np.ndarray, initial_obs),
-        return_as_np=True,
-    )
-    accum_dones = np.zeros(initial_obs.shape[0], dtype=bool)
-    obs = initial_obs
-    for i in range(rollout_horizon):
-        action = agent.act(obs, sample=sac_samples_action, batched=True)
-        pred_next_obs, pred_rewards, pred_dones, model_state = model_env.step(
-            action, model_state, sample=True
+    if total_batch_size % batch_size != 0:
+        raise RuntimeError("total_batch_size must be divisible by batch_size.")
+    for i in range(total_batch_size // batch_size):
+        batch = replay_buffer.sample(batch_size)
+        initial_obs, *_ = cast(mbrl.types.TransitionBatch, batch).astuple()
+        model_state = model_env.reset(
+            initial_obs_batch=cast(np.ndarray, initial_obs),
+            return_as_np=True,
         )
-        truncateds = np.zeros_like(pred_dones, dtype=bool)
-        sac_buffer.add_batch(
-            obs[~accum_dones],
-            action[~accum_dones],
-            pred_next_obs[~accum_dones],
-            pred_rewards[~accum_dones, 0],
-            pred_dones[~accum_dones, 0],
-            truncateds[~accum_dones, 0],
-        )
-        obs = pred_next_obs
-        accum_dones |= pred_dones.squeeze()
+        accum_dones = np.zeros(initial_obs.shape[0], dtype=bool)
+        obs = initial_obs
+        for i in range(rollout_horizon):
+            action = agent.act(obs, sample=sac_samples_action, batched=True)
+            pred_next_obs, pred_rewards, pred_dones, model_state = model_env.step(
+                action, model_state, sample=True, model_updates=model_updates
+            )
+            truncateds = np.zeros_like(pred_dones, dtype=bool)
+            sac_buffer.add_batch(
+                obs[~accum_dones],
+                action[~accum_dones],
+                pred_next_obs[~accum_dones],
+                pred_rewards[~accum_dones, 0],
+                pred_dones[~accum_dones, 0],
+                truncateds[~accum_dones, 0],
+            )
+            obs = pred_next_obs
+            accum_dones |= pred_dones.squeeze()
 
 
 def evaluate(
@@ -70,19 +76,29 @@ def evaluate(
     video_recorder: VideoRecorder,
 ) -> float:
     avg_episode_reward = 0.0
+    avg_reward_dist = 0.0
+    avg_reward_ctrl = 0.0
     for episode in range(num_episodes):
         obs, _ = env.reset()
         video_recorder.init(enabled=(episode == 0))
         terminated = False
         truncated = False
         episode_reward = 0.0
+        episode_reward_dist = 0.0
+        episode_reward_ctrl = 0.0
         while not terminated and not truncated:
             action = agent.act(obs)
-            obs, reward, terminated, truncated, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             video_recorder.record(env)
             episode_reward += reward
+            if 'reward_dist' in info:
+                episode_reward_dist += info['reward_dist']
+            if 'reward_ctrl' in info:
+                episode_reward_ctrl += info['reward_ctrl']
         avg_episode_reward += episode_reward
-    return avg_episode_reward / num_episodes
+        avg_reward_dist += episode_reward_dist
+        avg_reward_ctrl += episode_reward_ctrl
+    return avg_episode_reward / num_episodes, avg_reward_dist / num_episodes, avg_reward_ctrl / num_episodes
 
 
 def maybe_replace_sac_buffer(
@@ -134,7 +150,7 @@ def train(
 
     work_dir = work_dir or os.getcwd()
     # enable_back_compatible to use pytorch_sac agent
-    logger = mbrl.util.Logger(work_dir, enable_back_compatible=True)
+    logger = mbrl.util.Logger(cfg, work_dir, enable_back_compatible=True)
     logger.register_group(
         mbrl.constants.RESULTS_LOG_NAME,
         MBPO_LOG_FORMAT,
@@ -173,9 +189,10 @@ def train(
 
     # ---------------------------------------------------------
     # --------------------- Training Loop ---------------------
-    rollout_batch_size = (
+    rollout_total_batch_size = (
         cfg.overrides.effective_model_rollouts_per_step * cfg.algorithm.freq_train_model
     )
+    rollout_batch_size = cfg.overrides.rollout_batch_size
     trains_per_epoch = int(
         np.ceil(cfg.overrides.epoch_length / cfg.overrides.freq_train_model)
     )
@@ -187,11 +204,14 @@ def train(
     model_trainer = mbrl.models.ModelTrainer(
         dynamics_model,
         optim_lr=cfg.overrides.model_lr,
+        gp_optim_lr=cfg.overrides.gp_lr,
         weight_decay=cfg.overrides.model_wd,
         logger=None if silent else logger,
     )
     best_eval_reward = -np.inf
     epoch = 0
+    iteration = 0
+    model_updates = 0
     sac_buffer = None
     while env_steps < cfg.overrides.num_steps:
         rollout_length = int(
@@ -199,7 +219,7 @@ def train(
                 *(cfg.overrides.rollout_schedule + [epoch + 1])
             )
         )
-        sac_buffer_capacity = rollout_length * rollout_batch_size * trains_per_epoch
+        sac_buffer_capacity = rollout_length * rollout_total_batch_size * trains_per_epoch
         sac_buffer_capacity *= cfg.overrides.num_epochs_to_retain_sac_buffer
         sac_buffer = maybe_replace_sac_buffer(
             sac_buffer, obs_shape, act_shape, sac_buffer_capacity, cfg.seed
@@ -227,12 +247,15 @@ def train(
             # --------------- Model Training -----------------
             if (env_steps + 1) % cfg.overrides.freq_train_model == 0:
                 mbrl.util.common.train_model_and_save_model_and_data(
+                    env_steps,
                     dynamics_model,
                     model_trainer,
                     cfg.overrides,
                     replay_buffer,
                     work_dir=work_dir,
+                    model_updates=model_updates,
                 )
+                model_updates += 1
 
                 # --------- Rollout new model and store imagined trajectories --------
                 # Batch all rollouts for the next freq_train_model steps together
@@ -243,7 +266,9 @@ def train(
                     sac_buffer,
                     cfg.algorithm.sac_samples_action,
                     rollout_length,
+                    rollout_total_batch_size,
                     rollout_batch_size,
+                    model_updates,
                 )
 
                 if debug_mode:
@@ -271,31 +296,39 @@ def train(
                     reverse_mask=True,
                 )
                 updates_made += 1
-                if not silent and updates_made % cfg.log_frequency_agent == 0:
-                    logger.dump(updates_made, save=True)
-
-            # ------ Epoch ended (evaluate and save model) ------
-            if (env_steps + 1) % cfg.overrides.epoch_length == 0:
-                avg_reward = evaluate(
-                    test_env, agent, cfg.algorithm.num_eval_episodes, video_recorder
-                )
-                logger.log_data(
-                    mbrl.constants.RESULTS_LOG_NAME,
-                    {
-                        "epoch": epoch,
-                        "env_step": env_steps,
-                        "episode_reward": avg_reward,
-                        "rollout_length": rollout_length,
-                    },
-                )
-                if avg_reward > best_eval_reward:
-                    video_recorder.save(f"{epoch}.mp4")
-                    best_eval_reward = avg_reward
-                    agent.sac_agent.save_checkpoint(
-                        ckpt_path=os.path.join(work_dir, "sac.pth")
-                    )
-                epoch += 1
 
             env_steps += 1
             obs = next_obs
+
+        # ------ Iteration ended (evaluate and save model) ------
+        if iteration % cfg.evaluation_interval == 0:
+            avg_reward, reward_dist, reward_ctrl = evaluate(test_env, agent, cfg.algorithm.num_eval_episodes, video_recorder)
+            logger.log_data(
+                mbrl.constants.RESULTS_LOG_NAME,
+                {
+                    "iteration": iteration,
+                    "env_step": env_steps,
+                    "eval/episode_reward_dist": reward_dist,
+                    "eval/episode_reward_ctrl": reward_ctrl,
+                    "eval/episode_reward": avg_reward,
+                    "train/rollout_length": rollout_length,
+                },
+            )
+            print(f"Iteration {iteration} eval episode reward: {avg_reward}")
+        iteration += 1
+    
+    # Evaluate at the end of training
+    avg_reward, _, _ = evaluate(test_env, agent, cfg.algorithm.num_eval_episodes, video_recorder)
+    logger.log_data(
+        mbrl.constants.RESULTS_LOG_NAME,
+        {
+            "iteration": iteration,
+            "env_step": env_steps,
+            "eval/episode_reward": avg_reward,
+            "train/rollout_length": rollout_length,
+        },
+    )
+    print(f"Iteration {iteration} eval episode reward: {avg_reward}")
+    wandb.finish()
+
     return np.float32(best_eval_reward)

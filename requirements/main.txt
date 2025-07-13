@@ -10,3 +10,10 @@ jupyter>=1.0.0
 pytest>=6.0.1
 sk-video>=1.1.10
 tqdm>=4.48.2
+gym==0.26.1
+mujoco-py==2.1.2.14
+Cython==0.29.21
+dm_control
+wandb
+gpustat
+gpytorch

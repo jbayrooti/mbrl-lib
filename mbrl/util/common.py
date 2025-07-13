@@ -6,6 +6,7 @@ import pathlib
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import gymnasium as gym
+import torch
 import hydra
 import numpy as np
 import omegaconf
@@ -13,6 +14,7 @@ import omegaconf
 import mbrl.models
 import mbrl.planning
 import mbrl.types
+from mbrl.models.gp_gaussian_mlp import GPGaussianMLP
 
 from .replay_buffer import (
     BootstrapIterator,
@@ -254,7 +256,28 @@ def get_basic_buffer_iterators(
             val_data, batch_size, shuffle_each_epoch=False, rng=replay_buffer.rng
         )
 
-    return train_iter, val_iter
+    return train_data, train_iter, val_iter
+
+def get_gp_buffer_iterators(
+    replay_buffer: ReplayBuffer,
+    train_data: mbrl.types.TransitionBatch,
+    model: mbrl.models.Model,
+    batch_size: int,
+    shuffle_each_epoch: bool = True,
+    num_gp_train_data: int = 1000,
+) -> Tuple[TransitionIterator, Optional[TransitionIterator]]:
+    train_data_subset = train_data[replay_buffer.rng.choice(len(train_data), num_gp_train_data, replace=False)]
+    model_in, targets = model._process_batch(train_data_subset)
+
+    with torch.no_grad():
+        mean_pred, _ = model(model_in)
+        shifted_targets = targets - mean_pred
+        gp_data = mbrl.types.GPTransitionBatch(model_in, shifted_targets)
+
+    gp_train_iter = TransitionIterator(
+        gp_data, batch_size, shuffle_each_epoch=shuffle_each_epoch, rng=replay_buffer.rng
+    )
+    return gp_train_iter
 
 
 _SequenceIterType = Union[SequenceTransitionIterator, SequenceTransitionSampler]
@@ -360,12 +383,14 @@ def get_sequence_buffer_iterator(
 
 
 def train_model_and_save_model_and_data(
+    env_steps: int,
     model: mbrl.models.Model,
     model_trainer: mbrl.models.ModelTrainer,
     cfg: omegaconf.DictConfig,
     replay_buffer: ReplayBuffer,
     work_dir: Optional[Union[str, pathlib.Path]] = None,
     callback: Optional[Callable] = None,
+    model_updates: Optional[int] = 0,
 ):
     """Convenience function for training a model and saving results.
 
@@ -390,7 +415,8 @@ def train_model_and_save_model_and_data(
         callback (callable, optional): if provided, this function will be called after
             every training epoch. See :class:`mbrl.models.ModelTrainer` for signature.
     """
-    dataset_train, dataset_val = mbrl.util.common.get_basic_buffer_iterators(
+    train_gp = isinstance(model.model, GPGaussianMLP)
+    train_data, dataset_train, dataset_val = mbrl.util.common.get_basic_buffer_iterators(
         replay_buffer,
         cfg.model_batch_size,
         cfg.validation_ratio,
@@ -401,13 +427,33 @@ def train_model_and_save_model_and_data(
     if hasattr(model, "update_normalizer"):
         model.update_normalizer(replay_buffer.get_all())
     model_trainer.train(
+        env_steps,
         dataset_train,
         dataset_val=dataset_val,
         num_epochs=cfg.get("num_epochs_train_model", None),
         patience=cfg.get("patience", 1),
         improvement_threshold=cfg.get("improvement_threshold", 0.01),
         callback=callback,
+        model_updates=model_updates,
     )
+    if not train_gp and model.model.use_optimism:
+        model.model.update_low_reward_percentile(cfg.num_steps / cfg.freq_train_model, model_updates)
+    if train_gp:
+        model.model.update_low_reward_percentile(cfg.num_steps / cfg.freq_train_model, model_updates)
+        gp_dataset_train = mbrl.util.common.get_gp_buffer_iterators(
+            replay_buffer,
+            train_data,
+            model,
+            cfg.model_batch_size,
+            shuffle_each_epoch=True,
+            num_gp_train_data=cfg.num_gp_train_data,
+        )
+        model_trainer.train_gp(
+            env_steps,
+            gp_dataset_train,
+            num_epochs=cfg.get("num_epochs_train_gp", None),
+            model_updates=model_updates,
+        )
     if work_dir is not None:
         model.save(str(work_dir))
         replay_buffer.save(work_dir)

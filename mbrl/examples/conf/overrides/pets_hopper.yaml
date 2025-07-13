@@ -1,6 +1,10 @@
 # @package _group_
 env: "gym___Hopper-v4"
 term_fn: "hopper"
+exp_name: "pets_hopper"
+project_name: project_name
+seed: 0
+
 learned_rewards: true
 num_steps: 125000
 trial_length: 1000

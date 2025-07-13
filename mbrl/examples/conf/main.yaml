@@ -1,12 +1,12 @@
 defaults:
-  - algorithm: pets
-  - dynamics_model: gaussian_mlp_ensemble
-  - overrides: pets_cartpole
-  - action_optimizer: cem
+  - algorithm: mbpo
+  - dynamics_model: gp_gaussian_mlp_ensemble
+  - overrides: hot_gp_halfcheetah
+  - action_optimizer: null
 
-seed: 0
+seed: ${overrides.seed}
 device: "cuda:0"
-log_frequency_agent: 1000
+evaluation_interval: 20
 save_video: false
 debug_mode: false
 

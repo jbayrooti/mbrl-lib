@@ -1,6 +1,9 @@
 # @package _group_
 env: "gym___Hopper-v4"
 term_fn: "hopper"
+exp_name: "mbpo_hopper"
+project_name: project_name
+seed: 0
 
 num_steps: 125000
 epoch_length: 1000

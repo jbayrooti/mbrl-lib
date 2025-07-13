@@ -1,5 +1,8 @@
 # @package _group_
 env: "pybulletgym___InvertedPendulumMuJoCoEnv-v0"
+exp_name: "pb_mbpo_inv_pendulum"
+project_name: project_name
+seed: 0
 
 term_fn: "inverted_pendulum"
 

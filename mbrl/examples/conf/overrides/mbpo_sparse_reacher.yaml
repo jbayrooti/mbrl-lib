@@ -1,13 +1,14 @@
 # @package _group_
-env: "gym___Pusher-v4"
+env: "sparse_pets_reacher"
 term_fn: "no_termination"
 trial_length: 150
-exp_name: "mbpo_pusher"
-project_name: "optimistic_rl_pusher"
+exp_name: "mbpo_sparse_reacher"
+project_name: "optimistic_rl_sparse_reacher"
 seed: 0
 
 action_penalty: 0
-num_steps: 20000
+epsilon: 0.2
+num_steps: 100000
 epoch_length: 150
 num_elites: 5
 patience: 5
@@ -28,7 +29,7 @@ num_epochs_to_retain_sac_buffer: 1
 ensemble_size: 7
 deterministic: false
 propagation_method: expectation
-use_optimism: false # for optimistic reward selectin
+use_optimism: false # for optimistic reward selection
 initial_low_reward_percentile: 0.1
 final_low_reward_percentile: 0.5
 high_reward_percentile: 1
